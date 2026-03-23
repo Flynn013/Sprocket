@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
+import { sprocketEngine } from '../engine/SprocketEngine';
 
 export type Message = {
   role: 'user' | 'model';
@@ -12,6 +13,13 @@ export interface ToolCallbacks {
   runCommand?: (command: string) => string;
   browseUrl?: (url: string) => Promise<string>;
   saveMemory?: (fact: string) => string;
+  searchVault?: (keyword: string) => Promise<string>;
+  readNeuron?: (title: string) => Promise<string>;
+  writeNeuron?: (title: string, content: string) => Promise<string>;
+  getBacklinks?: (title: string) => Promise<string>;
+  createSynapse?: (sourceTitle: string, targetTitle: string) => Promise<string>;
+  readScreen?: () => string;
+  peckElement?: (elementId: string) => string;
 }
 
 const memoryTools: FunctionDeclaration[] = [
@@ -24,6 +32,63 @@ const memoryTools: FunctionDeclaration[] = [
         fact: { type: Type.STRING, description: 'The fact or preference to remember (e.g., "User prefers dark mode", "User lives in New York")' }
       },
       required: ['fact']
+    }
+  },
+  {
+    name: 'searchVault',
+    description: 'Search the local Obsidian-style vault for a keyword to retrieve relevant memories and knowledge.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        keyword: { type: Type.STRING, description: 'The keyword or phrase to search for in the vault.' }
+      },
+      required: ['keyword']
+    }
+  },
+  {
+    name: 'readNeuron',
+    description: 'Read the content of a specific neuron (markdown file) from the vault.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING, description: 'The exact title of the neuron to read (without .md extension).' }
+      },
+      required: ['title']
+    }
+  },
+  {
+    name: 'writeNeuron',
+    description: 'Create or update a neuron (markdown file) in the vault to store knowledge. Use [[Wiki-Links]] in the content to reference other neurons.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING, description: 'The title of the neuron (without .md extension).' },
+        content: { type: Type.STRING, description: 'The markdown content of the neuron. Include [[Wiki-Links]] to connect ideas.' }
+      },
+      required: ['title', 'content']
+    }
+  },
+  {
+    name: 'getBacklinks',
+    description: 'Find all other neurons in the vault that link to the specified neuron title.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING, description: 'The title of the neuron to find backlinks for.' }
+      },
+      required: ['title']
+    }
+  },
+  {
+    name: 'createSynapse',
+    description: 'Create a direct link (synapse) between two neurons in the vault graph.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        sourceTitle: { type: Type.STRING, description: 'The title of the source neuron.' },
+        targetTitle: { type: Type.STRING, description: 'The title of the target neuron to link to.' }
+      },
+      required: ['sourceTitle', 'targetTitle']
     }
   }
 ];
@@ -83,6 +148,26 @@ const goosePenTools: FunctionDeclaration[] = [
         url: { type: Type.STRING }
       },
       required: ['url']
+    }
+  },
+  {
+    name: 'readScreen',
+    description: 'Read the current UI elements visible in the PeckingStation viewport.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {},
+      required: []
+    }
+  },
+  {
+    name: 'peckElement',
+    description: 'Tap or click an element in the PeckingStation by its ID.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        elementId: { type: Type.STRING, description: 'The ID of the element to peck/click.' }
+      },
+      required: ['elementId']
     }
   }
 ];
@@ -152,7 +237,11 @@ export async function sendMessage(
   });
 
   // Handle function calls
-  while (response.functionCalls && response.functionCalls.length > 0) {
+  let geminiHopCount = 0;
+  const MAX_GEMINI_HOPS = 30;
+
+  while (response.functionCalls && response.functionCalls.length > 0 && geminiHopCount < MAX_GEMINI_HOPS) {
+    geminiHopCount++;
     const functionCall = response.functionCalls[0];
     const { name, args } = functionCall;
     
@@ -170,6 +259,20 @@ export async function sendMessage(
         result = await callbacks.browseUrl(args.url as string);
       } else if (name === 'saveMemory' && callbacks?.saveMemory) {
         result = callbacks.saveMemory(args.fact as string);
+      } else if (name === 'searchVault' && callbacks?.searchVault) {
+        result = await callbacks.searchVault(args.keyword as string);
+      } else if (name === 'readNeuron' && callbacks?.readNeuron) {
+        result = await callbacks.readNeuron(args.title as string);
+      } else if (name === 'writeNeuron' && callbacks?.writeNeuron) {
+        result = await callbacks.writeNeuron(args.title as string, args.content as string);
+      } else if (name === 'getBacklinks' && callbacks?.getBacklinks) {
+        result = await callbacks.getBacklinks(args.title as string);
+      } else if (name === 'createSynapse' && callbacks?.createSynapse) {
+        result = await callbacks.createSynapse(args.sourceTitle as string, args.targetTitle as string);
+      } else if (name === 'readScreen' && callbacks?.readScreen) {
+        result = callbacks.readScreen();
+      } else if (name === 'peckElement' && callbacks?.peckElement) {
+        result = callbacks.peckElement(args.elementId as string);
       } else {
         result = `Error: Tool ${name} not found or not implemented.`;
       }
@@ -288,25 +391,20 @@ async function sendLocalMessage(
   let currentMessages = [...openAiMessages];
   let finalResponseText = "";
   const newGeminiMessages: Message[] = [];
+  
+  // Hop limit to prevent infinite loops and protect RAM
+  let hopCount = 0;
+  const MAX_HOPS = 30; // Increased to allow deep thinking and complex multi-step operations
 
-  while (true) {
-    const response = await fetch(`${localConfig.endpoint.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: localConfig.model,
-        messages: currentMessages,
-        tools: openAiTools,
-      })
+  while (hopCount < MAX_HOPS) {
+    hopCount++;
+    
+    const response = await sprocketEngine.chatCompletion({
+      messages: currentMessages,
+      tools: openAiTools,
     });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Local LLM Error (${response.status}): ${errText}`);
-    }
-
-    const data = await response.json();
-    const responseMessage = data.choices[0].message;
+    const responseMessage = response.choices[0].message;
     currentMessages.push(responseMessage);
 
     if (responseMessage.content) {
@@ -338,6 +436,13 @@ async function sendLocalMessage(
           else if (name === 'runCommand' && callbacks?.runCommand) result = callbacks.runCommand(args.command);
           else if (name === 'browseUrl' && callbacks?.browseUrl) result = await callbacks.browseUrl(args.url);
           else if (name === 'saveMemory' && callbacks?.saveMemory) result = callbacks.saveMemory(args.fact);
+          else if (name === 'searchVault' && callbacks?.searchVault) result = await callbacks.searchVault(args.keyword);
+          else if (name === 'readNeuron' && callbacks?.readNeuron) result = await callbacks.readNeuron(args.title);
+          else if (name === 'writeNeuron' && callbacks?.writeNeuron) result = await callbacks.writeNeuron(args.title, args.content);
+          else if (name === 'getBacklinks' && callbacks?.getBacklinks) result = await callbacks.getBacklinks(args.title);
+          else if (name === 'createSynapse' && callbacks?.createSynapse) result = await callbacks.createSynapse(args.sourceTitle, args.targetTitle);
+          else if (name === 'readScreen' && callbacks?.readScreen) result = callbacks.readScreen();
+          else if (name === 'peckElement' && callbacks?.peckElement) result = callbacks.peckElement(args.elementId);
           else result = `Error: Tool ${name} not found.`;
         } catch (err: any) {
           result = `Error: ${err.message}`;
@@ -347,7 +452,7 @@ async function sendLocalMessage(
           role: 'tool',
           tool_call_id: toolCall.id,
           name: name,
-          content: result
+          content: String(result)
         });
 
         functionResponsesForGeminiHistory.push({
@@ -361,6 +466,10 @@ async function sendLocalMessage(
     } else {
       break;
     }
+  }
+
+  if (hopCount >= MAX_HOPS) {
+    finalResponseText += "\n\n[System: Hop limit reached to protect memory. Terminating reasoning loop.]";
   }
 
   return {

@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { Folder, FileText, Globe, TerminalSquare, Terminal as TerminalIcon } from 'lucide-react';
+import { Folder, FileText, Globe, TerminalSquare, Terminal as TerminalIcon, Database, Smartphone, BrainCircuit } from 'lucide-react';
+import * as d3 from 'd3';
 import { cn } from '../lib/utils';
+import { vaultGardener, VaultGraph } from '../engine/VaultGardener';
+import PeckingStation, { PeckingStationState } from './PeckingStation';
 
 export type VFS = { [path: string]: string };
 
@@ -22,6 +25,7 @@ export interface GoosePenState {
     history: TerminalEntry[];
     cwd: string;
   };
+  pecking: PeckingStationState;
 }
 
 interface GoosePenProps {
@@ -30,9 +34,84 @@ interface GoosePenProps {
 }
 
 export default function GoosePen({ state, setState }: GoosePenProps) {
-  const [activeTab, setActiveTab] = useState<'files' | 'browser' | 'terminal'>('terminal');
+  const [activeTab, setActiveTab] = useState<'files' | 'browser' | 'terminal' | 'vault' | 'pecking'>('vault');
   const [terminalInput, setTerminalInput] = useState('');
   const terminalEndRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [graphData, setGraphData] = useState<VaultGraph>({ nodes: [], links: [] });
+
+  useEffect(() => {
+    const fetchGraph = () => {
+      vaultGardener.get_graph().then(data => {
+        setGraphData(data);
+      });
+    };
+
+    if (activeTab === 'vault') {
+      fetchGraph();
+    }
+
+    window.addEventListener('vault-updated', fetchGraph);
+    return () => window.removeEventListener('vault-updated', fetchGraph);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'vault' && svgRef.current && graphData.nodes.length > 0) {
+      const width = svgRef.current.clientWidth;
+      const height = 300; // Fixed height for the graph container
+      
+      const svg = d3.select(svgRef.current);
+      svg.selectAll("*").remove(); // Clear previous render
+      
+      const simulation = d3.forceSimulation(graphData.nodes as any)
+        .force("link", d3.forceLink(graphData.links).id((d: any) => d.id).distance(100))
+        .force("charge", d3.forceManyBody().strength(-200))
+        .force("center", d3.forceCenter(width / 2, height / 2));
+
+      const link = svg.append("g")
+        .attr("stroke", "#52525b") // zinc-600
+        .attr("stroke-opacity", 0.6)
+        .selectAll("line")
+        .data(graphData.links)
+        .join("line")
+        .attr("stroke-width", 1.5);
+
+      const node = svg.append("g")
+        .attr("stroke", "#fff")
+        .attr("stroke-width", 1.5)
+        .selectAll("circle")
+        .data(graphData.nodes)
+        .join("circle")
+        .attr("r", 8)
+        .attr("fill", (d) => d.group === 1 ? "#3b82f6" : "#10b981"); // blue for source, emerald for target
+
+      const label = svg.append("g")
+        .selectAll("text")
+        .data(graphData.nodes)
+        .join("text")
+        .text((d) => d.id)
+        .attr("font-size", "10px")
+        .attr("fill", "#a1a1aa") // zinc-400
+        .attr("dx", 12)
+        .attr("dy", 4);
+
+      simulation.on("tick", () => {
+        link
+          .attr("x1", (d: any) => d.source.x)
+          .attr("y1", (d: any) => d.source.y)
+          .attr("x2", (d: any) => d.target.x)
+          .attr("y2", (d: any) => d.target.y);
+
+        node
+          .attr("cx", (d: any) => d.x)
+          .attr("cy", (d: any) => d.y);
+          
+        label
+          .attr("x", (d: any) => d.x)
+          .attr("y", (d: any) => d.y);
+      });
+    }
+  }, [activeTab, graphData]);
 
   useEffect(() => {
     if (activeTab === 'terminal') {
@@ -178,37 +257,57 @@ export default function GoosePen({ state, setState }: GoosePenProps) {
   };
 
   return (
-    <div className="flex flex-col h-full bg-zinc-950 border-l border-zinc-800 text-zinc-100 font-mono text-sm">
-      <div className="flex items-center border-b border-zinc-800 bg-zinc-900/50 overflow-x-auto">
+    <div className="flex flex-row h-full bg-zinc-950 text-zinc-100 font-mono text-sm">
+      <div className="flex flex-col w-16 border-r border-zinc-800 bg-zinc-900/50 items-center py-4 space-y-4 shrink-0">
+        <button
+          onClick={() => setActiveTab('vault')}
+          className={cn(
+            "p-3 rounded-xl transition-colors",
+            activeTab === 'vault' ? "bg-white/10 text-white" : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+          )}
+          title="BrainBucket (Vault)"
+        >
+          <Database className="w-5 h-5" />
+        </button>
         <button
           onClick={() => setActiveTab('terminal')}
           className={cn(
-            "flex items-center space-x-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap",
-            activeTab === 'terminal' ? "border-white text-white bg-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-300"
+            "p-3 rounded-xl transition-colors",
+            activeTab === 'terminal' ? "bg-white/10 text-white" : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
           )}
+          title="Terminal"
         >
-          <TerminalIcon className="w-4 h-4" />
-          <span>Terminal</span>
+          <TerminalIcon className="w-5 h-5" />
         </button>
         <button
           onClick={() => setActiveTab('files')}
           className={cn(
-            "flex items-center space-x-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap",
-            activeTab === 'files' ? "border-white text-white bg-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-300"
+            "p-3 rounded-xl transition-colors",
+            activeTab === 'files' ? "bg-white/10 text-white" : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
           )}
+          title="File System"
         >
-          <Folder className="w-4 h-4" />
-          <span>File System</span>
+          <Folder className="w-5 h-5" />
         </button>
         <button
           onClick={() => setActiveTab('browser')}
           className={cn(
-            "flex items-center space-x-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap",
-            activeTab === 'browser' ? "border-white text-white bg-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-300"
+            "p-3 rounded-xl transition-colors",
+            activeTab === 'browser' ? "bg-white/10 text-white" : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
           )}
+          title="Browser"
         >
-          <Globe className="w-4 h-4" />
-          <span>Browser</span>
+          <Globe className="w-5 h-5" />
+        </button>
+        <button
+          onClick={() => setActiveTab('pecking')}
+          className={cn(
+            "p-3 rounded-xl transition-colors",
+            activeTab === 'pecking' ? "bg-white/10 text-white" : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+          )}
+          title="Pecking Station"
+        >
+          <Smartphone className="w-5 h-5" />
         </button>
       </div>
 
@@ -310,6 +409,47 @@ export default function GoosePen({ state, setState }: GoosePenProps) {
               )}
             </div>
           </div>
+        )}
+        {activeTab === 'vault' && (
+          <div className="space-y-4">
+            <div className="flex items-center space-x-2 text-zinc-400 mb-4">
+              <Database className="w-4 h-4" />
+              <span className="text-xs uppercase tracking-wider">BrainBucket</span>
+            </div>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+              <p className="text-zinc-300 text-sm mb-2">The BrainBucket is managing your local knowledge base via OPFS.</p>
+              <div className="grid grid-cols-2 gap-4 mt-4">
+                <div className="bg-zinc-950 p-3 rounded border border-zinc-800">
+                  <div className="text-xs text-zinc-500 uppercase">Neurons</div>
+                  <div className="text-2xl font-mono text-white mt-1">{graphData.nodes.length}</div>
+                </div>
+                <div className="bg-zinc-950 p-3 rounded border border-zinc-800">
+                  <div className="text-xs text-zinc-500 uppercase">Synapses</div>
+                  <div className="text-2xl font-mono text-white mt-1">{graphData.links.length}</div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 mt-4">
+              <div className="text-xs text-zinc-500 uppercase mb-4">Neural Pathway Map</div>
+              {graphData.nodes.length > 0 ? (
+                <svg ref={svgRef} className="w-full h-[300px] bg-zinc-950 rounded border border-zinc-800" />
+              ) : (
+                <div className="h-[300px] flex items-center justify-center bg-zinc-950 rounded border border-zinc-800 text-zinc-600 italic text-sm">
+                  The vault is empty. No neural pathways formed yet.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        {activeTab === 'pecking' && (
+          <PeckingStation 
+            state={state.pecking} 
+            setState={(updater) => setState(prev => ({ 
+              ...prev, 
+              pecking: typeof updater === 'function' ? updater(prev.pecking) : updater 
+            }))} 
+          />
         )}
       </div>
     </div>

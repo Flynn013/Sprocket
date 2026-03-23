@@ -5,6 +5,8 @@ import { cn } from '../lib/utils';
 import { sendMessage, Message, ToolCallbacks } from '../lib/gemini';
 import { AppState } from '../App';
 import { GoosePenState } from './GoosePen';
+import { sprocketEngine } from '../engine/SprocketEngine';
+import { vaultGardener } from '../engine/VaultGardener';
 
 export default function Chat({ 
   appState, 
@@ -19,8 +21,23 @@ export default function Chat({
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [engineStatus, setEngineStatus] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (appState.llmProvider === 'local') {
+      setEngineStatus('Initializing WebLLM...');
+      sprocketEngine.init((progress) => {
+        setEngineStatus(progress.text);
+      }, appState.localLlmConfig.model).then(() => {
+        setEngineStatus('');
+      }).catch(err => {
+        console.error(err);
+        setEngineStatus('Failed to load model');
+      });
+    }
+  }, [appState.llmProvider, appState.localLlmConfig.model]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -289,6 +306,43 @@ export default function Chat({
         const event = new CustomEvent('goose-save-memory', { detail: fact });
         window.dispatchEvent(event);
         return `Successfully saved memory: "${fact}"`;
+      },
+      searchVault: async (keyword) => {
+        const results = await vaultGardener.search_vault(keyword);
+        return results.length > 0 ? results.map(r => `[${r}]`).join(', ') : 'No results found.';
+      },
+      readNeuron: async (title) => {
+        try {
+          return await vaultGardener.read_vault_file(`/neurons/${title}.md`);
+        } catch (e) {
+          return `Neuron not found: ${title}`;
+        }
+      },
+      writeNeuron: async (title, content) => {
+        await vaultGardener.write_vault_neuron(title, content);
+        return `Successfully wrote neuron: ${title}`;
+      },
+      getBacklinks: async (title) => {
+        const backlinks = await vaultGardener.get_backlinks(title);
+        return backlinks.length > 0 ? backlinks.join(', ') : 'No backlinks found.';
+      },
+      createSynapse: async (sourceTitle, targetTitle) => {
+        await vaultGardener.createSynapse(sourceTitle, targetTitle);
+        return `Created synapse from ${sourceTitle} to ${targetTitle}`;
+      },
+      readScreen: () => {
+        setGoosePenState(prev => ({ ...prev, activeTab: 'pecking' }));
+        if (typeof (window as any).__readScreen === 'function') {
+          return (window as any).__readScreen();
+        }
+        return "Error: PeckingStation is not fully initialized or visible.";
+      },
+      peckElement: (elementId) => {
+        setGoosePenState(prev => ({ ...prev, activeTab: 'pecking' }));
+        if (typeof (window as any).__peckElement === 'function') {
+          return (window as any).__peckElement(elementId);
+        }
+        return `Error: Could not peck element ${elementId}. PeckingStation might not be initialized.`;
       }
     };
 
@@ -347,7 +401,7 @@ export default function Chat({
             className="flex w-full flex-col mb-2"
           >
             <div className="text-xs font-mono text-zinc-500 mb-1 uppercase tracking-wider">
-              {msg.role === 'user' ? `${appState.userName || 'USER'}>` : 'GOOSE>'}
+              {msg.role === 'user' ? `${appState.userName || 'USER'}>` : 'SPROCKET>'}
             </div>
             <div
               className="w-full bg-black text-white border border-zinc-800 p-4 rounded-sm"
@@ -385,7 +439,7 @@ export default function Chat({
         {isLoading && (
           <div className="flex w-full flex-col mb-2">
             <div className="text-xs font-mono text-zinc-500 mb-1 uppercase tracking-wider">
-              GOOSE&gt;
+              SPROCKET&gt;
             </div>
             <div className="w-full bg-black text-white border border-zinc-800 p-4 rounded-sm flex items-center space-x-2">
               <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />

@@ -36,7 +36,8 @@ export default function App() {
   const [goosePenState, setGoosePenState] = useState<GoosePenState>({
     vfs: {},
     browser: { currentUrl: '', history: [], content: '' },
-    terminal: { history: [], cwd: '/home/user' }
+    terminal: { history: [], cwd: '/home/user' },
+    pecking: { displayValue: '0', history: [] }
   });
 
   const [appState, setAppState] = useState<AppState>({
@@ -47,12 +48,12 @@ export default function App() {
       goosePen: false,
       memory: false,
     },
-    systemInstruction: "You are a helpful assistant named Goose. Your goal is to complete the requested task through any means necessary. Be persistent and creative in finding solutions. DO NOT ask the user for help or additional information - you must solve the problem autonomously where possible.",
+    systemInstruction: "You are a helpful assistant named Sprocket. Your goal is to complete the requested task through any means necessary. Be persistent and creative in finding solutions. DO NOT ask the user for help or additional information - you must solve the problem autonomously where possible. You have access to a local memory vault and a PeckingStation to interact with apps.",
     userMemories: "",
     llmProvider: 'gemini',
     localLlmConfig: {
       endpoint: 'http://localhost:11434/v1',
-      model: 'llama3'
+      model: 'Llama-3.1-8B-Instruct-q4f16_1-MLC'
     }
   });
 
@@ -118,6 +119,16 @@ ${appState.userMemories ? `USER PREFS, FACTS AND IMPORTANT MEMORIES TO consider:
 
       {/* Main Content Area */}
       <main className="flex-1 overflow-hidden relative flex">
+        {/* GoosePen Side Panel */}
+        <div className={cn(
+          "transition-all duration-300 ease-in-out border-zinc-800 bg-zinc-950 z-20 overflow-hidden shrink-0 min-w-0",
+          isGoosePenOpen ? "w-96 border-r" : "w-0 border-r-0"
+        )}>
+          <div className="w-96 h-full">
+            <GoosePen state={goosePenState} setState={setGoosePenState} />
+          </div>
+        </div>
+
         <div className="flex-1 relative overflow-hidden">
           <div className={cn("absolute inset-0 transition-opacity duration-200", activeTab === 'chat' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none')}>
             <Chat 
@@ -134,16 +145,6 @@ ${appState.userMemories ? `USER PREFS, FACTS AND IMPORTANT MEMORIES TO consider:
           </div>
           <div className={cn("absolute inset-0 transition-opacity duration-200 overflow-y-auto", activeTab === 'local' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none')}>
             <LocalInference appState={appState} setAppState={setAppState} />
-          </div>
-        </div>
-
-        {/* GoosePen Side Panel */}
-        <div className={cn(
-          "transition-all duration-300 ease-in-out border-l border-zinc-800 bg-zinc-950 z-20",
-          isGoosePenOpen ? "w-96 translate-x-0" : "w-0 translate-x-full border-l-0"
-        )}>
-          <div className="w-96 h-full">
-            <GoosePen state={goosePenState} setState={setGoosePenState} />
           </div>
         </div>
 
