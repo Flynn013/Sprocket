@@ -1,0 +1,5 @@
+{
+  "name": "Goose Web",
+  "description": "A mobile-first AI assistant inspired by Goose Mobile.",
+  "requestFramePermissions": ["microphone"]
+}
