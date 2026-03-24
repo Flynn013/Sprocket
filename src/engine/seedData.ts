@@ -58,7 +58,7 @@ The PeckingStation is my viewport into other applications. It allows me to see a
     title: "Local_LLM_Architecture",
     content: `# Local LLM Architecture
 
-I run on a local inference engine using WebGPU.
+I run on a local inference engine using native C++ code via JNI.
 
 ## Hardware
 - **Device:** OnePlus 9 Pro (Snapdragon 888)
@@ -66,9 +66,9 @@ I run on a local inference engine using WebGPU.
 - **Storage:** 256GB
 
 ## Software
-- **Engine:** WebLLM (via MLC-AI)
-- **Models:** I can run models like Llama-3, Qwen, Phi, and DeepSeek.
-- **Storage:** Origin Private File System (OPFS) for model weights and the [[BrainBucket]].`
+- **Engine:** Native Llama.cpp (via Capacitor JNI plugin)
+- **Models:** I run GGUF models like Llama-3 natively.
+- **Storage:** Origin Private File System (OPFS) for the [[BrainBucket]], and native device storage for model weights.`
   }
 ];
 

@@ -1,43 +1,50 @@
-import { pipeline, env } from '@xenova/transformers';
-
-// Disable local model check for browser environment
-env.allowLocalModels = false;
-env.useBrowserCache = true;
-
 export class EmbeddingEngine {
-  private extractor: any = null;
-  private isInitializing = false;
+  private worker: Worker | null = null;
+  private messageId = 0;
+  private callbacks: Map<number, { resolve: (val: any) => void; reject: (err: any) => void }> = new Map();
 
   async init() {
-    if (this.extractor || this.isInitializing) return;
-    this.isInitializing = true;
-    try {
-      // Use a small, efficient model for local embeddings
-      this.extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-    } catch (error) {
-      console.error("Failed to initialize EmbeddingEngine:", error);
-      throw error;
-    } finally {
-      this.isInitializing = false;
-    }
+    if (this.worker) return;
+    
+    this.worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+    
+    this.worker.onmessage = (e) => {
+      const { id, result, error } = e.data;
+      const callback = this.callbacks.get(id);
+      if (callback) {
+        if (error) callback.reject(new Error(error));
+        else callback.resolve(result);
+        this.callbacks.delete(id);
+      }
+    };
+  }
+
+  private postMessage(type: string, payload: any): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const id = this.messageId++;
+      this.callbacks.set(id, { resolve, reject });
+      this.worker?.postMessage({ id, type, payload });
+    });
   }
 
   async getEmbedding(text: string): Promise<number[]> {
     await this.init();
-    const output = await this.extractor(text, { pooling: 'mean', normalize: true });
-    return Array.from(output.data);
+    return this.postMessage('getEmbedding', { text });
   }
 
-  static cosineSimilarity(a: number[], b: number[]): number {
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-    for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
-    }
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  async saveVector(title: string, embedding: number[]): Promise<boolean> {
+    await this.init();
+    return this.postMessage('saveVector', { title, embedding });
+  }
+
+  async embedAndSave(text: string, vectorPath: string): Promise<any> {
+    await this.init();
+    return this.postMessage('embed_and_save', { text, vectorPath });
+  }
+
+  async vectorSearch(query: string, topK: number = 3): Promise<{ title: string; score: number }[]> {
+    await this.init();
+    return this.postMessage('vectorSearch', { query, topK });
   }
 }
 

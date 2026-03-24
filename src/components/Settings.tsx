@@ -64,31 +64,29 @@ export default function Settings({ appState, setAppState }: { appState: AppState
                     onChange={() => setAppState({...appState, llmProvider: 'local'})}
                     className="w-4 h-4 text-white bg-zinc-900 border-zinc-700 focus:ring-white focus:ring-offset-zinc-950"
                   />
-                  <span className="text-zinc-300">Local LLM (OpenAI Compatible)</span>
+                  <span className="text-zinc-300">Local LLM (Native Llama.cpp)</span>
                 </label>
               </div>
 
               {appState.llmProvider === 'local' && (
                 <div className="mt-4 p-4 bg-zinc-950/50 border border-zinc-800 rounded-xl space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-zinc-400 mb-1">Endpoint URL</label>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">Model Path (Native)</label>
                     <input 
                       type="text" 
-                      value={appState.localLlmConfig.endpoint}
-                      onChange={(e) => setAppState({...appState, localLlmConfig: {...appState.localLlmConfig, endpoint: e.target.value}})}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-100 focus:outline-none focus:border-white transition-colors"
-                      placeholder="http://localhost:11434/v1"
+                      value="/sdcard/Download/sprocket-models/llama-3-8b.gguf"
+                      readOnly
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-500 focus:outline-none transition-colors cursor-not-allowed"
                     />
-                    <p className="text-xs text-zinc-500 mt-1">e.g., http://localhost:11434/v1 for Ollama, or http://localhost:1234/v1 for LM Studio</p>
+                    <p className="text-xs text-zinc-500 mt-1">Native models must be placed in this directory on the device.</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-zinc-400 mb-1">Model Name</label>
                     <input 
                       type="text" 
                       value={appState.localLlmConfig.model}
-                      onChange={(e) => setAppState({...appState, localLlmConfig: {...appState.localLlmConfig, model: e.target.value}})}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-100 focus:outline-none focus:border-white transition-colors"
-                      placeholder="llama3"
+                      readOnly
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-500 focus:outline-none transition-colors cursor-not-allowed"
                     />
                   </div>
                 </div>

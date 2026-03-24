@@ -21,35 +21,53 @@ export class DangerRoomEngine {
       onUpdate(`[PUZZLE] Spawned: ${this.currentPuzzle.type} - ${this.currentPuzzle.id}`);
       
       const systemPrompt = `You are an expert solver in the Danger Room. 
-      Solve the following puzzle. You MUST provide a detailed Chain-of-Thought (CoT) 
-      explaining your reasoning before giving the final answer. 
-      Format: 
-      Reasoning: <your CoT>
-      Answer: <final answer>`;
+      Solve the puzzle and output your response strictly as a JSON object.
+      You MUST provide a detailed Chain-of-Thought explaining your reasoning.
+      
+      Output Schema:
+      {
+        "reasoning": "string (your detailed step-by-step logic)",
+        "final_answer": "string (ONLY the exact final answer, e.g., '2', 'No', '50')"
+      }`;
 
       try {
-        const response = await InferenceRouter.route(modelType, {
+        // Assume InferenceRouter handles the JSON format enforcement under the hood
+        const rawResponse = await InferenceRouter.route(modelType, {
           systemPrompt,
           userPrompt: this.currentPuzzle.content,
-          onToken: (token) => onUpdate(`[THINKING] ${token}`)
+          onToken: (token) => onUpdate(`[THINKING] ${token}`),
+          enforceJson: true
         });
 
-        const isCorrect = response.toLowerCase().includes(this.currentPuzzle.expectedAnswer.toLowerCase());
+        // Parse the structured payload
+        const parsedData = JSON.parse(rawResponse);
         
-        if (isCorrect) {
-          onUpdate(`[SUCCESS] Puzzle ${this.currentPuzzle.id} solved correctly.`);
-          // Save CoT to BrainBucket for Student RAG
-          const title = `CoT_${this.currentPuzzle.type}_${this.currentPuzzle.id}`;
-          await vaultGardener.write_vault_neuron(title, response);
-          onUpdate(`[VAULT] Saved reasoning to BrainBucket: ${title}`);
-        } else {
-          onUpdate(`[FAILURE] Incorrect answer. Expected: ${this.currentPuzzle.expectedAnswer}`);
+        if (!parsedData || !parsedData.final_answer) {
+          throw new Error("Invalid JSON format or missing final_answer");
         }
 
-        // Small delay to prevent thermal throttling
+        // Exact match validation (fixes the .includes bug)
+        const isCorrect = parsedData.final_answer.trim().toLowerCase() === this.currentPuzzle.expectedAnswer.toLowerCase();
+
+        if (isCorrect) {
+          onUpdate(`[SUCCESS] Puzzle ${this.currentPuzzle.id} solved correctly.`);
+          
+          // Save the structured JSON to BrainBucket
+          const title = `CoT_${this.currentPuzzle.type}_${this.currentPuzzle.id}`;
+          
+          // We pass the structured object, allowing the worker to embed specific fields
+          await vaultGardener.write_vault_neuron(title, JSON.stringify(parsedData));
+          
+          onUpdate(`[VAULT] Saved JSON reasoning to BrainBucket: ${title}`);
+        } else {
+          onUpdate(`[FAILURE] Incorrect answer. Expected: ${this.currentPuzzle.expectedAnswer}, Got: ${parsedData.final_answer}`);
+        }
+
+        // 2-second thermal throttling delay for the Snapdragon 888
         await new Promise(r => setTimeout(r, 2000));
+        
       } catch (error) {
-        onUpdate(`[ERROR] Loop interrupted: ${error}`);
+        onUpdate(`[ERROR] Loop interrupted (Parse/Network Error): ${error}`);
         this.isRunning = false;
       }
     }

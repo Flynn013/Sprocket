@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Mic, MicOff, Loader2 } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, ChevronDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { cn } from '../lib/utils';
 import { sendMessage, Message, ToolCallbacks } from '../lib/gemini';
@@ -11,12 +11,14 @@ import { NativeBridge } from '../engine/NativeBridge';
 
 export default function Chat({ 
   appState, 
+  setAppState,
   finalSystemInstruction,
   setGoosePenState,
   currentSessionId,
   setCurrentSessionId
 }: { 
   appState: AppState, 
+  setAppState: React.Dispatch<React.SetStateAction<AppState>>,
   finalSystemInstruction: string,
   setGoosePenState: React.Dispatch<React.SetStateAction<GoosePenState>>,
   currentSessionId: string | null,
@@ -63,7 +65,7 @@ export default function Chat({
 
   useEffect(() => {
     if (appState.llmProvider === 'local') {
-      setEngineStatus('Initializing WebLLM...');
+      setEngineStatus('Initializing Native Engine...');
       sprocketEngine.init((progress) => {
         setEngineStatus(progress.text);
       }, appState.localLlmConfig.model).then(() => {
@@ -438,14 +440,20 @@ export default function Chat({
     }
   };
 
+  const estimatedTokens = messages.reduce((acc, msg) => {
+    return acc + msg.parts.reduce((partAcc, part) => {
+      return partAcc + (part.text ? Math.ceil(part.text.length / 4) : 0);
+    }, 0);
+  }, 0);
+  const maxTokens = appState.llmProvider === 'local' ? 4096 : 128000;
+  const contextPercentage = Math.min(100, (estimatedTokens / maxTokens) * 100);
+
   return (
     <div className="flex flex-col h-full w-full max-w-3xl mx-auto">
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-zinc-500 space-y-4">
-            <div className="w-16 h-16 rounded-full bg-zinc-900 flex items-center justify-center">
-              <span className="text-3xl">ð¦¿</span>
-            </div>
+            <svg viewBox="0 0 100 100" fill="currentColor" className="w-24 h-24 text-black opacity-80" xmlns="http://www.w3.org/2000/svg"><path d="M50,10 C40,10 35,15 35,25 C35,35 40,40 50,40 C60,40 65,35 65,25 C65,15 60,10 50,10 Z M35,25 C30,20 20,15 10,25 C0,35 10,55 30,60 C50,65 70,65 90,60 C110,55 120,35 110,25 C100,15 90,20 85,25" /></svg>
             <p className="text-sm">How can I help you today?</p>
           </div>
         )}
@@ -538,6 +546,36 @@ export default function Chat({
           >
             <Send className="w-5 h-5" />
           </button>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between px-2">
+          <div className="relative group">
+            <select
+              value={appState.llmProvider}
+              onChange={(e) => setAppState(prev => ({ ...prev, llmProvider: e.target.value as 'gemini' | 'local' }))}
+              className="appearance-none bg-transparent text-white text-xs font-medium pr-6 py-1 cursor-pointer focus:outline-none"
+            >
+              <option value="gemini" className="bg-zinc-900 text-white">Gemini 3.1 Pro</option>
+              <option value="local" className="bg-zinc-900 text-white">Local Llama.cpp</option>
+            </select>
+            <ChevronDown className="w-3 h-3 text-zinc-400 absolute right-1 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+          
+          <div className="flex items-center gap-2 flex-1 max-w-[200px]">
+            <div className="text-[10px] text-zinc-500 font-mono">CTX</div>
+            <div className="flex-1 h-1 bg-zinc-800 rounded-full overflow-hidden">
+              <div 
+                className={cn(
+                  "h-full transition-all duration-300",
+                  contextPercentage > 90 ? "bg-red-500" : contextPercentage > 75 ? "bg-yellow-500" : "bg-zinc-400"
+                )}
+                style={{ width: `${contextPercentage}%` }}
+              />
+            </div>
+            <div className="text-[10px] text-zinc-500 font-mono w-12 text-right">
+              {estimatedTokens > 1000 ? `${(estimatedTokens/1000).toFixed(1)}k` : estimatedTokens}/{maxTokens > 1000 ? `${(maxTokens/1000).toFixed(0)}k` : maxTokens}
+            </div>
+          </div>
         </div>
       </div>
     </div>

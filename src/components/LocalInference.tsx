@@ -2,21 +2,20 @@ import { useState, useEffect } from 'react';
 import { Cpu, HardDrive, Play, CheckCircle2 } from 'lucide-react';
 import { AppState } from '../App';
 import { cn } from '../lib/utils';
-import { prebuiltAppConfig } from '@mlc-ai/web-llm';
+import { Capacitor } from '@capacitor/core';
 
 export default function LocalInference({ appState, setAppState }: { appState: AppState, setAppState: (state: AppState) => void }) {
   const [models, setModels] = useState<any[]>([]);
   
   useEffect(() => {
-    // Load available models from WebLLM config
-    const availableModels = prebuiltAppConfig.model_list.filter(m => 
-      m.model_id.includes('Llama-3') || 
-      m.model_id.includes('Qwen') || 
-      m.model_id.includes('Mistral') ||
-      m.model_id.includes('Phi') ||
-      m.model_id.includes('DeepSeek')
-    );
-    setModels(availableModels);
+    // Hardcoded native model for Sprocket
+    setModels([
+      {
+        model_id: "llama-3-8b.gguf",
+        vram_required_MB: 4096,
+        path: "/sdcard/Download/sprocket-models/llama-3-8b.gguf"
+      }
+    ]);
   }, []);
 
   const selectModel = (modelId: string) => {
@@ -35,9 +34,12 @@ export default function LocalInference({ appState, setAppState }: { appState: Ap
       <div className="space-y-2">
         <h2 className="text-2xl font-semibold tracking-tight flex items-center space-x-2">
           <Cpu className="w-6 h-6 text-white" />
-          <span>Local Inference (WebGPU)</span>
+          <span>Local Inference (Native JNI)</span>
         </h2>
-        <p className="text-zinc-400 text-sm">Run models entirely in your browser using WebGPU and OPFS. No API keys required.</p>
+        <p className="text-zinc-400 text-sm">Run models entirely on-device using native llama.cpp via Capacitor. No API keys required.</p>
+        {!Capacitor.isNativePlatform() && (
+          <p className="text-amber-500 text-sm font-bold">Warning: Running in browser. Native inference will be simulated.</p>
+        )}
       </div>
 
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
@@ -71,11 +73,9 @@ export default function LocalInference({ appState, setAppState }: { appState: Ap
                     <h4 className="text-sm font-medium text-zinc-100">{model.model_id}</h4>
                     <div className="flex items-center gap-2 mt-1">
                       <p className="text-xs text-zinc-500">
-                        {model.vram_required_MB ? `Est. VRAM: ${Math.round(model.vram_required_MB / 1024)}GB` : 'VRAM: Unknown'}
+                        {model.vram_required_MB ? `Est. RAM: ${Math.round(model.vram_required_MB / 1024)}GB` : 'RAM: Unknown'}
                       </p>
-                      {localStorage.getItem(`stocked_${model.model_id}`) === 'true' && (
-                        <span className="text-[10px] bg-white/10 text-white px-1.5 py-0.5 rounded border border-white/20 font-mono uppercase">Stocked</span>
-                      )}
+                      <span className="text-[10px] bg-white/10 text-white px-1.5 py-0.5 rounded border border-white/20 font-mono uppercase">Native</span>
                     </div>
                   </div>
                 </div>

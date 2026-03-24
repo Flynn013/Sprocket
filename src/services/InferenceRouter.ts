@@ -9,37 +9,51 @@ export interface InferenceRequest {
   systemPrompt: string;
   userPrompt: string;
   onToken: (token: string) => void;
+  enforceJson?: boolean;
 }
 
 export class InferenceRouter {
   static async route(type: ModelType, request: InferenceRequest): Promise<string> {
-    const { systemPrompt, userPrompt, onToken } = request;
+    const { systemPrompt, userPrompt, onToken, enforceJson = false } = request;
 
     if (type === 'native-pro' && Capacitor.isNativePlatform()) {
-      return this.runNativeInference(systemPrompt, userPrompt, onToken);
+      return this.runNativeInference(systemPrompt, userPrompt, enforceJson, onToken);
     }
 
     if (type === 'cloud-teacher') {
-      return this.runCloudInference(systemPrompt, userPrompt, onToken);
+      return this.runCloudInference(systemPrompt, userPrompt, enforceJson, onToken);
     }
 
-    return this.runLocalInference(systemPrompt, userPrompt, onToken);
+    return this.runLocalInference(systemPrompt, userPrompt, enforceJson, onToken);
   }
 
-  private static async runCloudInference(sys: string, user: string, onToken: (t: string) => void): Promise<string> {
+  private static async runCloudInference(sys: string, user: string, enforceJson: boolean, onToken: (t: string) => void): Promise<string> {
     // Using our existing Gemini integration as the "Teacher"
-    const response = await sendMessage(user, [], { googleSearch: true, readWebpage: false }, sys, undefined, 'gemini', undefined, onToken);
+    const response = await sendMessage(
+      user, 
+      [], 
+      { 
+        googleSearch: !enforceJson, // Turn off search in the Danger Room to isolate reasoning
+        readWebpage: false,
+        jsonMode: enforceJson
+      }, 
+      sys, 
+      undefined, 
+      'gemini', 
+      undefined, 
+      onToken
+    );
     return response.text;
   }
 
-  private static async runLocalInference(sys: string, user: string, onToken: (t: string) => void): Promise<string> {
+  private static async runLocalInference(sys: string, user: string, enforceJson: boolean, onToken: (t: string) => void): Promise<string> {
     if (!sprocketEngine.isInitialized) {
       await sprocketEngine.init();
     }
-    return await sprocketEngine.runAgentLoop(sys, [{ role: 'user', content: user }], onToken);
+    return await sprocketEngine.runAgentLoop(sys, [{ role: 'user', content: user }], onToken, undefined, enforceJson ? "json_object" : "text");
   }
 
-  private static async runNativeInference(sys: string, user: string, onToken: (t: string) => void): Promise<string> {
+  private static async runNativeInference(sys: string, user: string, enforceJson: boolean, onToken: (t: string) => void): Promise<string> {
     let fullText = "";
     const listener = await SprocketEnginePlugin.addListener('token', (data) => {
       fullText += data.chunk;
@@ -47,13 +61,13 @@ export class InferenceRouter {
     });
 
     try {
-      await SprocketEnginePlugin.prompt({
+      const result = await SprocketEnginePlugin.prompt({
         systemPrompt: sys,
         userPrompt: user,
-        modelPath: '/sdcard/Download/sprocket-models/llama-3-8b.gguf'
+        modelPath: '/sdcard/Download/sprocket-models/llama-3-8b.gguf',
+        responseFormat: enforceJson ? "json_object" : "text"
       });
-      // In a real implementation, we'd wait for a 'complete' event
-      return fullText;
+      return result.response || fullText;
     } finally {
       listener.remove();
     }

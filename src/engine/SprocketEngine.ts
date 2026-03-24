@@ -1,120 +1,108 @@
-import { CreateMLCEngine, MLCEngine, InitProgressReport } from "@mlc-ai/web-llm";
+import { Capacitor } from '@capacitor/core';
+import SprocketEnginePlugin from '../plugins/SprocketEngine';
+
+export interface InitProgressReport {
+  text: string;
+  progress: number;
+}
 
 export class SprocketEngine {
-  private engine: MLCEngine | null = null;
-  private modelId: string;
-  private isInitializing: boolean = false;
+  private _isInitialized: boolean = false;
+  private modelPath: string;
 
-  constructor(modelId: string = "Llama-3.1-8B-Instruct-q4f16_1-MLC") {
-    this.modelId = modelId;
+  constructor(modelPath: string = "/sdcard/Download/sprocket-models/llama-3-8b.gguf") {
+    this.modelPath = modelPath;
   }
 
   get isInitialized(): boolean {
-    return this.engine !== null;
+    return this._isInitialized;
   }
 
   async init(onProgress?: (progress: InitProgressReport) => void, modelId?: string) {
-    if (modelId && modelId !== this.modelId) {
-      this.modelId = modelId;
-      if (this.engine) {
-        await this.engine.unload();
-        this.engine = null;
-      }
+    if (this._isInitialized) return;
+    
+    if (onProgress) {
+      onProgress({ text: "Initializing native engine...", progress: 0.5 });
     }
-    if (this.engine || this.isInitializing) return;
-    this.isInitializing = true;
-
-    try {
-      this.engine = await CreateMLCEngine(this.modelId, {
-        initProgressCallback: onProgress,
-      });
-    } catch (error) {
-      console.error("Failed to initialize MLCEngine:", error);
-      throw error;
-    } finally {
-      this.isInitializing = false;
+    
+    // In a real native plugin, we might load the model here.
+    // For now, we just mark it as initialized.
+    this._isInitialized = true;
+    
+    if (onProgress) {
+      onProgress({ text: "Ready.", progress: 1.0 });
     }
   }
 
   async chatCompletion(request: any, onToken?: (token: string) => void) {
-    if (!this.engine) {
+    if (!this._isInitialized) {
       throw new Error("Engine not initialized. Call init() first.");
     }
-    if (onToken) {
-      const chunks = await this.engine.chat.completions.create({
-        ...request,
-        stream: true
-      }) as any;
-      let fullResponse = "";
-      for await (const chunk of chunks) {
-        const content = chunk.choices[0]?.delta?.content || "";
-        if (content) {
-          fullResponse += content;
-          onToken(fullResponse);
-        }
-      }
-      return {
-        choices: [{
-          message: {
-            content: fullResponse,
-            role: 'assistant',
-            tool_calls: []
-          }
-        }]
-      } as any;
-    }
-    return await this.engine.chat.completions.create(request);
+
+    const systemPrompt = request.messages.find((m: any) => m.role === 'system')?.content || "";
+    const userPrompt = request.messages.filter((m: any) => m.role !== 'system').map((m: any) => m.content).join('\n');
+    const responseFormat = request.response_format?.type === 'json_object' ? 'json_object' : 'text';
+
+    return this.runInference(systemPrompt, userPrompt, responseFormat, onToken);
   }
 
   async runAgentLoop(
     systemPrompt: string,
     messages: { role: "user" | "assistant" | "system"; content: string }[],
     onUpdate: (text: string) => void,
-    tools?: any[]
+    tools?: any[],
+    responseFormat: string = "text"
   ) {
-    if (!this.engine) {
+    if (!this._isInitialized) {
       throw new Error("Engine not initialized. Call init() first.");
     }
 
-    const fullMessages = [
-      { role: "system", content: systemPrompt },
-      ...messages,
-    ];
+    const userPrompt = messages.map(m => m.content).join('\n');
+    return this.runInference(systemPrompt, userPrompt, responseFormat, onUpdate);
+  }
 
-    try {
-      const chunks = await this.engine.chat.completions.create({
-        messages: fullMessages as any,
-        stream: true,
-        tools: tools,
+  private async runInference(systemPrompt: string, userPrompt: string, responseFormat: string = "text", onToken?: (token: string) => void) {
+    let fullText = "";
+    
+    if (Capacitor.isNativePlatform()) {
+      const listener = await SprocketEnginePlugin.addListener('token', (data) => {
+        fullText += data.chunk;
+        if (onToken) onToken(fullText);
       });
 
-      let fullResponse = "";
-      for await (const chunk of chunks) {
-        const content = chunk.choices[0]?.delta?.content || "";
-        if (content) {
-          fullResponse += content;
-          onUpdate(fullResponse);
-        }
+      try {
+        const result = await SprocketEnginePlugin.prompt({
+          systemPrompt,
+          userPrompt,
+          modelPath: this.modelPath,
+          responseFormat
+        });
+        return result.response || fullText;
+      } finally {
+        listener.remove();
       }
-
-      return fullResponse;
-    } catch (error) {
-      console.error("Inference error:", error);
-      throw error;
+    } else {
+      // Simulated response for web
+      const simulatedResponse = "[Simulated Local Response] Running in browser. Native Llama.cpp requires Android.";
+      if (onToken) {
+        for (let i = 0; i < simulatedResponse.length; i++) {
+          await new Promise(r => setTimeout(r, 10));
+          fullText += simulatedResponse[i];
+          onToken(fullText);
+        }
+      } else {
+        fullText = simulatedResponse;
+      }
+      return fullText;
     }
   }
 
   async reset() {
-    if (this.engine) {
-      await this.engine.resetChat();
-    }
+    // No-op for now
   }
 
   async unload() {
-    if (this.engine) {
-      await this.engine.unload();
-      this.engine = null;
-    }
+    this._isInitialized = false;
   }
 }
 

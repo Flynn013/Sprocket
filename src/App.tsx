@@ -61,7 +61,7 @@ export default function App() {
     llmProvider: 'gemini',
     localLlmConfig: {
       endpoint: 'http://localhost:11434/v1',
-      model: 'Llama-3.1-8B-Instruct-q4f16_1-MLC'
+      model: 'llama-3-8b.gguf'
     }
   });
 
@@ -214,6 +214,7 @@ ${appState.userMemories ? `USER PREFS, FACTS AND IMPORTANT MEMORIES TO consider:
           <div className={cn("absolute inset-0 transition-opacity duration-200", activeTab === 'chat' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none')}>
             <Chat 
               appState={appState} 
+              setAppState={setAppState}
               finalSystemInstruction={finalSystemInstruction} 
               setGoosePenState={setGoosePenState}
               currentSessionId={currentSessionId}

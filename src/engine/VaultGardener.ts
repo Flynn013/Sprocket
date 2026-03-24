@@ -81,18 +81,12 @@ export class VaultGardener {
       await writable.write(content);
       await writable.close();
       
-      // Generate and store embedding for RAG
-      try {
-        const embedding = await embeddingEngine.getEmbedding(content);
-        const vectorsDir = await this.rootDir!.getDirectoryHandle('vectors', { create: true });
-        const vectorHandle = await vectorsDir.getFileHandle(safeTitle.replace('.md', '.json'), { create: true });
-        const vectorWritable = await vectorHandle.createWritable();
-        await vectorWritable.write(JSON.stringify(embedding));
-        await vectorWritable.close();
-      } catch (e) {
-        console.warn("Failed to generate embedding for neuron:", title, e);
-      }
+      // Offload the embedding and vector saving to the background
+      embeddingEngine.embedAndSave(content, safeTitle.replace('.md', '.bin')).catch(err => {
+        console.error("Failed to embed and save vector:", err);
+      });
       
+      // Immediately trigger UI updates without waiting for the math to finish
       await this.build_atlas();
       window.dispatchEvent(new CustomEvent('vault-updated'));
     } catch (error) {
@@ -140,8 +134,8 @@ export class VaultGardener {
           temperature: 0.3,
         });
         
-        if (response.choices && response.choices.length > 0) {
-          summary = response.choices[0].message.content || summary;
+        if (response) {
+          summary = response;
         }
       } else {
         // Fallback to Gemini if API key is available
@@ -220,40 +214,14 @@ export class VaultGardener {
   async vector_search(query: string, topK: number = 5): Promise<{ title: string; score: number }[]> {
     await this.init();
     try {
-      const queryEmbedding = await embeddingEngine.getEmbedding(query);
-      const vectorsDir = await this.rootDir!.getDirectoryHandle('vectors');
-      const results: { title: string; score: number }[] = [];
-      
-      // @ts-ignore
-      for await (const [name, handle] of vectorsDir.entries()) {
-        if (handle.kind === 'file' && name.endsWith('.json')) {
-          const file = await handle.getFile();
-          const text = await file.text();
-          const embedding = JSON.parse(text);
-          
-          const score = this.cosineSimilarity(queryEmbedding, embedding);
-          results.push({ title: name.replace('.json', ''), score });
-        }
-      }
-      
-      return results.sort((a, b) => b.score - a.score).slice(0, topK);
+      return await embeddingEngine.vectorSearch(query, topK);
     } catch (error) {
       console.error("Vector search failed:", error);
       return [];
     }
   }
 
-  private cosineSimilarity(a: number[], b: number[]): number {
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-    for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
-    }
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-  }
+
 
   async build_atlas(): Promise<void> {
     await this.init();
@@ -415,7 +383,7 @@ export class VaultGardener {
       // Also remove vector if it exists
       try {
         const vectorsDir = await this.rootDir!.getDirectoryHandle('vectors');
-        await vectorsDir.removeEntry(safeTitle.replace('.md', '.json'));
+        await vectorsDir.removeEntry(safeTitle.replace('.md', '.bin'));
       } catch (e) {
         // Ignore if vector doesn't exist
       }
