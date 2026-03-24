@@ -36,9 +36,32 @@ export class SprocketEngine {
     }
   }
 
-  async chatCompletion(request: any) {
+  async chatCompletion(request: any, onToken?: (token: string) => void) {
     if (!this.engine) {
       throw new Error("Engine not initialized. Call init() first.");
+    }
+    if (onToken) {
+      const chunks = await this.engine.chat.completions.create({
+        ...request,
+        stream: true
+      }) as any;
+      let fullResponse = "";
+      for await (const chunk of chunks) {
+        const content = chunk.choices[0]?.delta?.content || "";
+        if (content) {
+          fullResponse += content;
+          onToken(fullResponse);
+        }
+      }
+      return {
+        choices: [{
+          message: {
+            content: fullResponse,
+            role: 'assistant',
+            tool_calls: []
+          }
+        }]
+      } as any;
     }
     return await this.engine.chat.completions.create(request);
   }

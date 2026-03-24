@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { sprocketEngine } from '../engine/SprocketEngine';
+import { PromptArchitect, ModelTier } from '../engine/PromptArchitect';
 
 export type Message = {
   role: 'user' | 'model';
@@ -18,8 +19,11 @@ export interface ToolCallbacks {
   writeNeuron?: (title: string, content: string) => Promise<string>;
   getBacklinks?: (title: string) => Promise<string>;
   createSynapse?: (sourceTitle: string, targetTitle: string) => Promise<string>;
-  readScreen?: () => string;
-  peckElement?: (elementId: string) => string;
+  readScreen?: () => Promise<string>;
+  peckElement?: (elementId: string) => Promise<string>;
+  managePlan?: (action: 'create' | 'update' | 'read' | 'delete', id: string, plan?: any) => Promise<string>;
+  listPlans?: () => Promise<string>;
+  vectorSearch?: (query: string, topK?: number) => Promise<string>;
 }
 
 const memoryTools: FunctionDeclaration[] = [
@@ -169,6 +173,48 @@ const goosePenTools: FunctionDeclaration[] = [
       },
       required: ['elementId']
     }
+  },
+  {
+    name: 'managePlan',
+    description: 'Create, update, read, or delete a structured multi-step plan for complex tasks. Plans are stored in the vault.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        action: { type: Type.STRING, enum: ['create', 'update', 'read', 'delete'], description: 'The action to perform on the plan.' },
+        id: { type: Type.STRING, description: 'The unique ID of the plan (e.g., "research_ai_news").' },
+        plan: { 
+          type: Type.OBJECT, 
+          description: 'The plan object (required for create/update). Should include "title", "steps" (array of {task, status}), and "status".',
+          properties: {
+            title: { type: Type.STRING },
+            steps: { 
+              type: Type.ARRAY, 
+              items: { 
+                type: Type.OBJECT,
+                properties: {
+                  task: { type: Type.STRING },
+                  status: { type: Type.STRING, enum: ['pending', 'in-progress', 'completed', 'failed'] }
+                }
+              }
+            },
+            status: { type: Type.STRING, enum: ['active', 'completed', 'cancelled'] }
+          }
+        }
+      },
+      required: ['action', 'id']
+    }
+  },
+  {
+    name: 'vectorSearch',
+    description: 'Perform a semantic search in the vault using embeddings. This is better than keyword search for finding related concepts.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: { type: Type.STRING, description: 'The search query or concept to find.' },
+        topK: { type: Type.NUMBER, description: 'Number of results to return (default 5).' }
+      },
+      required: ['query']
+    }
   }
 ];
 
@@ -179,10 +225,11 @@ export async function sendMessage(
   systemInstruction?: string,
   callbacks?: ToolCallbacks,
   provider: 'gemini' | 'local' = 'gemini',
-  localConfig?: { endpoint: string; model: string }
+  localConfig?: { endpoint: string; model: string },
+  onToken?: (token: string) => void
 ) {
   if (provider === 'local' && localConfig) {
-    return sendLocalMessage(message, history, tools, systemInstruction, callbacks, localConfig);
+    return sendLocalMessage(message, history, tools, systemInstruction, callbacks, localConfig, onToken);
   }
 
   const apiKey = process.env.GEMINI_API_KEY || (import.meta as any).env.VITE_GEMINI_API_KEY;
@@ -190,10 +237,11 @@ export async function sendMessage(
     throw new Error("Gemini API key is missing. Please check your environment configuration.");
   }
   const ai = new GoogleGenAI({ apiKey });
-  const model = "gemini-3.1-pro-preview"; // Use pro for better tool usage and reasoning
+  const modelId = "gemini-3.1-pro-preview"; // Use pro for better tool usage and reasoning
+  const tier = PromptArchitect.getModelTier(modelId);
   
   const config: any = {};
-  const activeTools: any[] = [];
+  let activeTools: any[] = [];
   
   if (tools.googleSearch) {
     activeTools.push({ googleSearch: {} });
@@ -213,7 +261,8 @@ export async function sendMessage(
     }
 
     if (allFunctionDeclarations.length > 0) {
-      activeTools.push({ functionDeclarations: allFunctionDeclarations });
+      const filtered = PromptArchitect.filterTools(tier, allFunctionDeclarations);
+      activeTools.push({ functionDeclarations: filtered });
     }
   }
 
@@ -221,8 +270,9 @@ export async function sendMessage(
     config.tools = activeTools;
   }
 
-  if (systemInstruction) {
-    config.systemInstruction = systemInstruction;
+  const finalInstruction = PromptArchitect.getSystemInstruction(tier, systemInstruction || "");
+  if (finalInstruction) {
+    config.systemInstruction = finalInstruction;
   }
 
   const contents = [
@@ -231,10 +281,14 @@ export async function sendMessage(
   ];
 
   let response = await ai.models.generateContent({
-    model,
+    model: modelId,
     contents,
     config
   });
+
+  if (onToken && response.text) {
+    onToken(response.text);
+  }
 
   // Handle function calls
   let geminiHopCount = 0;
@@ -270,9 +324,15 @@ export async function sendMessage(
       } else if (name === 'createSynapse' && callbacks?.createSynapse) {
         result = await callbacks.createSynapse(args.sourceTitle as string, args.targetTitle as string);
       } else if (name === 'readScreen' && callbacks?.readScreen) {
-        result = callbacks.readScreen();
+        result = await callbacks.readScreen();
       } else if (name === 'peckElement' && callbacks?.peckElement) {
-        result = callbacks.peckElement(args.elementId as string);
+        result = await callbacks.peckElement(args.elementId as string);
+      } else if (name === 'managePlan' && callbacks?.managePlan) {
+        result = await callbacks.managePlan(args.action as any, args.id as string, args.plan);
+      } else if (name === 'listPlans' && callbacks?.listPlans) {
+        result = await callbacks.listPlans();
+      } else if (name === 'vectorSearch' && callbacks?.vectorSearch) {
+        result = await callbacks.vectorSearch(args.query as string, args.topK as number);
       } else {
         result = `Error: Tool ${name} not found or not implemented.`;
       }
@@ -306,10 +366,13 @@ export async function sendMessage(
 
     // Call the model again with the function response
     response = await ai.models.generateContent({
-      model,
+      model: modelId,
       contents,
       config
     });
+    if (onToken && response.text) {
+      onToken(response.text);
+    }
   }
 
   // Update the history array in place so the caller gets the updated history
@@ -330,11 +393,15 @@ async function sendLocalMessage(
   tools: { googleSearch: boolean; readWebpage: boolean; goosePen?: boolean; memory?: boolean },
   systemInstruction: string | undefined,
   callbacks: ToolCallbacks | undefined,
-  localConfig: { endpoint: string; model: string }
+  localConfig: { endpoint: string; model: string },
+  onToken?: (token: string) => void
 ) {
+  const tier = PromptArchitect.getModelTier(localConfig.model);
+  const finalInstruction = PromptArchitect.getSystemInstruction(tier, systemInstruction || "");
+
   const openAiMessages: any[] = [];
-  if (systemInstruction) {
-    openAiMessages.push({ role: 'system', content: systemInstruction });
+  if (finalInstruction) {
+    openAiMessages.push({ role: 'system', content: finalInstruction });
   }
 
   for (const msg of history) {
@@ -379,7 +446,9 @@ async function sendLocalMessage(
   if (tools.goosePen) allTools = [...allTools, ...goosePenTools];
   if (tools.memory) allTools = [...allTools, ...memoryTools];
 
-  const openAiTools = allTools.length > 0 ? allTools.map(t => ({
+  const filteredTools = PromptArchitect.filterTools(tier, allTools);
+
+  const openAiTools = filteredTools.length > 0 ? filteredTools.map(t => ({
     type: 'function',
     function: {
       name: t.name,
@@ -402,9 +471,9 @@ async function sendLocalMessage(
     const response = await sprocketEngine.chatCompletion({
       messages: currentMessages,
       tools: openAiTools,
-    });
+    }, onToken);
 
-    const responseMessage = response.choices[0].message;
+    const responseMessage = response.choices[0].message as any;
     currentMessages.push(responseMessage);
 
     if (responseMessage.content) {
@@ -441,8 +510,11 @@ async function sendLocalMessage(
           else if (name === 'writeNeuron' && callbacks?.writeNeuron) result = await callbacks.writeNeuron(args.title, args.content);
           else if (name === 'getBacklinks' && callbacks?.getBacklinks) result = await callbacks.getBacklinks(args.title);
           else if (name === 'createSynapse' && callbacks?.createSynapse) result = await callbacks.createSynapse(args.sourceTitle, args.targetTitle);
-          else if (name === 'readScreen' && callbacks?.readScreen) result = callbacks.readScreen();
-          else if (name === 'peckElement' && callbacks?.peckElement) result = callbacks.peckElement(args.elementId);
+          else if (name === 'readScreen' && callbacks?.readScreen) result = await callbacks.readScreen();
+          else if (name === 'peckElement' && callbacks?.peckElement) result = await callbacks.peckElement(args.elementId);
+          else if (name === 'managePlan' && callbacks?.managePlan) result = await callbacks.managePlan(args.action as any, args.id as string, args.plan);
+          else if (name === 'listPlans' && callbacks?.listPlans) result = await callbacks.listPlans();
+          else if (name === 'vectorSearch' && callbacks?.vectorSearch) result = await callbacks.vectorSearch(args.query, args.topK);
           else result = `Error: Tool ${name} not found.`;
         } catch (err: any) {
           result = `Error: ${err.message}`;

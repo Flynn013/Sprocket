@@ -1,5 +1,6 @@
 import { sprocketEngine } from './SprocketEngine';
 import { seedNeurons, seedSynapses } from './seedData';
+import { embeddingEngine } from './EmbeddingEngine';
 
 export interface VaultGraph {
   nodes: { id: string; group: number }[];
@@ -20,6 +21,9 @@ export class VaultGardener {
       const neuronsDir = await this.rootDir.getDirectoryHandle('neurons', { create: true });
       await this.rootDir.getDirectoryHandle('synapses', { create: true });
       await this.rootDir.getDirectoryHandle('atlas', { create: true });
+      await this.rootDir.getDirectoryHandle('sessions', { create: true });
+      await this.rootDir.getDirectoryHandle('plans', { create: true });
+      await this.rootDir.getDirectoryHandle('vectors', { create: true });
       
       this.isInitialized = true;
 
@@ -76,6 +80,18 @@ export class VaultGardener {
       const writable = await fileHandle.createWritable();
       await writable.write(content);
       await writable.close();
+      
+      // Generate and store embedding for RAG
+      try {
+        const embedding = await embeddingEngine.getEmbedding(content);
+        const vectorsDir = await this.rootDir!.getDirectoryHandle('vectors', { create: true });
+        const vectorHandle = await vectorsDir.getFileHandle(safeTitle.replace('.md', '.json'), { create: true });
+        const vectorWritable = await vectorHandle.createWritable();
+        await vectorWritable.write(JSON.stringify(embedding));
+        await vectorWritable.close();
+      } catch (e) {
+        console.warn("Failed to generate embedding for neuron:", title, e);
+      }
       
       await this.build_atlas();
       window.dispatchEvent(new CustomEvent('vault-updated'));
@@ -201,6 +217,44 @@ export class VaultGardener {
     return this.search_vault(`[[${title}]]`);
   }
 
+  async vector_search(query: string, topK: number = 5): Promise<{ title: string; score: number }[]> {
+    await this.init();
+    try {
+      const queryEmbedding = await embeddingEngine.getEmbedding(query);
+      const vectorsDir = await this.rootDir!.getDirectoryHandle('vectors');
+      const results: { title: string; score: number }[] = [];
+      
+      // @ts-ignore
+      for await (const [name, handle] of vectorsDir.entries()) {
+        if (handle.kind === 'file' && name.endsWith('.json')) {
+          const file = await handle.getFile();
+          const text = await file.text();
+          const embedding = JSON.parse(text);
+          
+          const score = this.cosineSimilarity(queryEmbedding, embedding);
+          results.push({ title: name.replace('.json', ''), score });
+        }
+      }
+      
+      return results.sort((a, b) => b.score - a.score).slice(0, topK);
+    } catch (error) {
+      console.error("Vector search failed:", error);
+      return [];
+    }
+  }
+
+  private cosineSimilarity(a: number[], b: number[]): number {
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < a.length; i++) {
+      dotProduct += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  }
+
   async build_atlas(): Promise<void> {
     await this.init();
     try {
@@ -257,6 +311,120 @@ export class VaultGardener {
     } catch (error) {
       // If graph doesn't exist, return empty
       return { nodes: [], links: [] };
+    }
+  }
+
+  async saveSession(id: string, messages: any[]): Promise<void> {
+    await this.init();
+    const sessionsDir = await this.rootDir!.getDirectoryHandle('sessions', { create: true });
+    const fileHandle = await sessionsDir.getFileHandle(`${id}.json`, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(JSON.stringify(messages, null, 2));
+    await writable.close();
+  }
+
+  async loadSession(id: string): Promise<any[]> {
+    await this.init();
+    try {
+      const sessionsDir = await this.rootDir!.getDirectoryHandle('sessions', { create: true });
+      const fileHandle = await sessionsDir.getFileHandle(`${id}.json`);
+      const file = await fileHandle.getFile();
+      const text = await file.text();
+      return JSON.parse(text);
+    } catch (error) {
+      console.warn(`Session ${id} not found, returning empty array:`, error);
+      return [];
+    }
+  }
+
+  async listSessions(): Promise<string[]> {
+    await this.init();
+    const sessionsDir = await this.rootDir!.getDirectoryHandle('sessions', { create: true });
+    const sessions: string[] = [];
+    // @ts-ignore
+    for await (const [name, handle] of sessionsDir.entries()) {
+      if (handle.kind === 'file' && name.endsWith('.json')) {
+        sessions.push(name.replace('.json', ''));
+      }
+    }
+    return sessions;
+  }
+
+  async deleteSession(id: string): Promise<void> {
+    await this.init();
+    try {
+      const sessionsDir = await this.rootDir!.getDirectoryHandle('sessions', { create: true });
+      await sessionsDir.removeEntry(`${id}.json`);
+    } catch (error) {
+      console.warn(`Failed to delete session ${id}:`, error);
+    }
+  }
+
+  async savePlan(id: string, plan: any): Promise<void> {
+    await this.init();
+    const plansDir = await this.rootDir!.getDirectoryHandle('plans', { create: true });
+    const fileHandle = await plansDir.getFileHandle(`${id}.json`, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(JSON.stringify(plan, null, 2));
+    await writable.close();
+  }
+
+  async loadPlan(id: string): Promise<any> {
+    await this.init();
+    const plansDir = await this.rootDir!.getDirectoryHandle('plans', { create: true });
+    try {
+      const fileHandle = await plansDir.getFileHandle(`${id}.json`);
+      const file = await fileHandle.getFile();
+      const text = await file.text();
+      return JSON.parse(text);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async listPlans(): Promise<string[]> {
+    await this.init();
+    const plansDir = await this.rootDir!.getDirectoryHandle('plans', { create: true });
+    const plans: string[] = [];
+    // @ts-ignore
+    for await (const [name, handle] of plansDir.entries()) {
+      if (handle.kind === 'file' && name.endsWith('.json')) {
+        plans.push(name.replace('.json', ''));
+      }
+    }
+    return plans;
+  }
+
+  async deletePlan(id: string): Promise<void> {
+    await this.init();
+    try {
+      const plansDir = await this.rootDir!.getDirectoryHandle('plans', { create: true });
+      await plansDir.removeEntry(`${id}.json`);
+      window.dispatchEvent(new CustomEvent('plans-updated'));
+    } catch (error) {
+      console.warn("Failed to delete plan:", id, error);
+    }
+  }
+  async delete_vault_neuron(title: string): Promise<void> {
+    await this.init();
+    try {
+      const neuronsDir = await this.rootDir!.getDirectoryHandle('neurons');
+      const safeTitle = title.replace(/[^a-z0-9]/gi, '_').toLowerCase() + '.md';
+      await neuronsDir.removeEntry(safeTitle);
+      
+      // Also remove vector if it exists
+      try {
+        const vectorsDir = await this.rootDir!.getDirectoryHandle('vectors');
+        await vectorsDir.removeEntry(safeTitle.replace('.md', '.json'));
+      } catch (e) {
+        // Ignore if vector doesn't exist
+      }
+      
+      await this.build_atlas();
+      window.dispatchEvent(new CustomEvent('vault-updated'));
+    } catch (error) {
+      console.error(`Failed to delete neuron ${title}:`, error);
+      throw new Error(`Failed to delete neuron: ${title}`);
     }
   }
 }

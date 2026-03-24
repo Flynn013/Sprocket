@@ -1,5 +1,5 @@
 {
-  "name": "Goose Web",
-  "description": "A mobile-first AI assistant inspired by Goose Mobile.",
+  "name": "Sprocket",
+  "description": "A fully sandboxed AI assistant with persistent memory and application interaction capabilities.",
   "requestFramePermissions": ["microphone"]
 }

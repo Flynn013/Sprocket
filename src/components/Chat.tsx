@@ -7,15 +7,20 @@ import { AppState } from '../App';
 import { GoosePenState } from './GoosePen';
 import { sprocketEngine } from '../engine/SprocketEngine';
 import { vaultGardener } from '../engine/VaultGardener';
+import { NativeBridge } from '../engine/NativeBridge';
 
 export default function Chat({ 
   appState, 
   finalSystemInstruction,
-  setGoosePenState
+  setGoosePenState,
+  currentSessionId,
+  setCurrentSessionId
 }: { 
   appState: AppState, 
   finalSystemInstruction: string,
-  setGoosePenState: React.Dispatch<React.SetStateAction<GoosePenState>>
+  setGoosePenState: React.Dispatch<React.SetStateAction<GoosePenState>>,
+  currentSessionId: string | null,
+  setCurrentSessionId: (id: string | null) => void
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -24,6 +29,37 @@ export default function Chat({
   const [engineStatus, setEngineStatus] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+
+  // Load session when currentSessionId changes
+  useEffect(() => {
+    if (currentSessionId) {
+      vaultGardener.loadSession(currentSessionId).then(setMessages).catch(err => {
+        console.error("Failed to load session:", err);
+        setMessages([]);
+      });
+    } else {
+      setMessages([]);
+    }
+  }, [currentSessionId]);
+
+  // Auto-save session
+  useEffect(() => {
+    if (messages.length > 0) {
+      const save = async () => {
+        let id = currentSessionId;
+        if (!id) {
+          // Generate a title from the first message
+          const firstMsg = messages.find(m => m.role === 'user')?.parts.find(p => p.text)?.text || 'New Chat';
+          const title = firstMsg.substring(0, 20).replace(/[^a-z0-9]/gi, '_');
+          id = `chat_${new Date().getTime()}_${title}`;
+          setCurrentSessionId(id);
+          window.dispatchEvent(new CustomEvent('sessions-updated'));
+        }
+        await vaultGardener.saveSession(id, messages);
+      };
+      save();
+    }
+  }, [messages, currentSessionId, setCurrentSessionId]);
 
   useEffect(() => {
     if (appState.llmProvider === 'local') {
@@ -330,19 +366,38 @@ export default function Chat({
         await vaultGardener.createSynapse(sourceTitle, targetTitle);
         return `Created synapse from ${sourceTitle} to ${targetTitle}`;
       },
-      readScreen: () => {
+      readScreen: async () => {
         setGoosePenState(prev => ({ ...prev, activeTab: 'pecking' }));
-        if (typeof (window as any).__readScreen === 'function') {
-          return (window as any).__readScreen();
-        }
-        return "Error: PeckingStation is not fully initialized or visible.";
+        return await NativeBridge.execute({ type: 'read_screen', payload: {} });
       },
-      peckElement: (elementId) => {
+      peckElement: async (elementId) => {
         setGoosePenState(prev => ({ ...prev, activeTab: 'pecking' }));
-        if (typeof (window as any).__peckElement === 'function') {
-          return (window as any).__peckElement(elementId);
+        return await NativeBridge.execute({ type: 'click', payload: { elementId } });
+      },
+      managePlan: async (action, id, plan) => {
+        if (action === 'create' || action === 'update') {
+          if (!plan) return "Error: Plan object is required for create/update actions.";
+          await vaultGardener.savePlan(id, plan);
+          window.dispatchEvent(new CustomEvent('plans-updated'));
+          return `Successfully ${action}d plan: ${id}`;
+        } else if (action === 'read') {
+          const loadedPlan = await vaultGardener.loadPlan(id);
+          return loadedPlan ? JSON.stringify(loadedPlan, null, 2) : `Plan not found: ${id}`;
+        } else if (action === 'delete') {
+          await vaultGardener.deletePlan(id);
+          return `Plan ${id} deleted successfully.`;
         }
-        return `Error: Could not peck element ${elementId}. PeckingStation might not be initialized.`;
+        return "Invalid action.";
+      },
+      listPlans: async () => {
+        const plans = await vaultGardener.listPlans();
+        return plans.length > 0 ? plans.join(', ') : 'No plans found.';
+      },
+      vectorSearch: async (query, topK) => {
+        const results = await vaultGardener.vector_search(query, topK);
+        return results.length > 0 
+          ? results.map(r => `[${r.title}] (score: ${r.score.toFixed(2)})`).join('\n')
+          : 'No semantically similar neurons found.';
       }
     };
 
@@ -456,7 +511,7 @@ export default function Chat({
             onClick={toggleListening}
             className={cn(
               "p-3 rounded-full shrink-0 transition-colors",
-              isListening ? "bg-red-500/20 text-red-500" : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+              isListening ? "bg-white/10 text-white" : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
             )}
           >
             {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
@@ -471,7 +526,7 @@ export default function Chat({
                 handleSend();
               }
             }}
-            placeholder="Message Goose..."
+            placeholder="Message Sprocket..."
             className="flex-1 max-h-32 min-h-[44px] bg-transparent border-none focus:ring-0 resize-none py-3 px-2 text-[15px] text-zinc-100 placeholder:text-zinc-500"
             rows={1}
           />

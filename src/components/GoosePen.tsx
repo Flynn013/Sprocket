@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { Folder, FileText, Globe, TerminalSquare, Terminal as TerminalIcon, Database, Smartphone, BrainCircuit } from 'lucide-react';
+import { Folder, FileText, Globe, TerminalSquare, Terminal as TerminalIcon, Database, Smartphone, BrainCircuit, ClipboardList, Zap } from 'lucide-react';
 import * as d3 from 'd3';
 import { cn } from '../lib/utils';
 import { vaultGardener, VaultGraph } from '../engine/VaultGardener';
 import PeckingStation, { PeckingStationState } from './PeckingStation';
+import DangerRoom from './DangerRoom';
 
 export type VFS = { [path: string]: string };
 
@@ -19,6 +20,7 @@ export type TerminalEntry = {
 };
 
 export interface GoosePenState {
+  activeTab: 'files' | 'browser' | 'terminal' | 'vault' | 'pecking' | 'plans' | 'danger';
   vfs: VFS;
   browser: BrowserState;
   terminal: {
@@ -34,26 +36,69 @@ interface GoosePenProps {
 }
 
 export default function GoosePen({ state, setState }: GoosePenProps) {
-  const [activeTab, setActiveTab] = useState<'files' | 'browser' | 'terminal' | 'vault' | 'pecking'>('vault');
+  const { activeTab } = state;
+  const setActiveTab = (tab: GoosePenState['activeTab']) => setState(prev => ({ ...prev, activeTab: tab }));
   const [terminalInput, setTerminalInput] = useState('');
   const terminalEndRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [graphData, setGraphData] = useState<VaultGraph>({ nodes: [], links: [] });
+  const [neuronList, setNeuronList] = useState<string[]>([]);
+  const [selectedNeuron, setSelectedNeuron] = useState<string | null>(null);
+  const [neuronContent, setNeuronContent] = useState('');
+  const [plans, setPlans] = useState<string[]>([]);
+  const [selectedPlan, setSelectedPlan] = useState<any | null>(null);
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+
+  const fetchPlans = async () => {
+    const planIds = await vaultGardener.listPlans();
+    setPlans(planIds);
+  };
+
+  const handleSelectPlan = async (id: string) => {
+    const plan = await vaultGardener.loadPlan(id);
+    setSelectedPlan(plan);
+    setSelectedPlanId(id);
+  };
+
+  const handleSelectNeuron = async (name: string) => {
+    setSelectedNeuron(name);
+    try {
+      const content = await vaultGardener.read_vault_file(`/neurons/${name}.md`);
+      setNeuronContent(content);
+    } catch (e) {
+      setNeuronContent('');
+    }
+  };
+
+  const handleSaveNeuron = async () => {
+    if (selectedNeuron) {
+      await vaultGardener.write_vault_neuron(selectedNeuron, neuronContent);
+      setSelectedNeuron(null);
+      const files = await vaultGardener.list_vault_dir('/neurons');
+      setNeuronList(files.map(f => f.replace('.md', '')));
+    }
+  };
 
   useEffect(() => {
-    const fetchGraph = () => {
+    const fetchData = () => {
       vaultGardener.get_graph().then(data => {
         setGraphData(data);
       });
+      vaultGardener.list_vault_dir('/neurons').then(files => {
+        setNeuronList(files.map(f => f.replace('.md', '')));
+      });
     };
 
-    if (activeTab === 'vault') {
-      fetchGraph();
-    }
+    fetchData();
+    fetchPlans();
 
-    window.addEventListener('vault-updated', fetchGraph);
-    return () => window.removeEventListener('vault-updated', fetchGraph);
-  }, [activeTab]);
+    window.addEventListener('vault-updated', fetchData);
+    window.addEventListener('plans-updated', fetchPlans);
+    return () => {
+      window.removeEventListener('vault-updated', fetchData);
+      window.removeEventListener('plans-updated', fetchPlans);
+    };
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'vault' && svgRef.current && graphData.nodes.length > 0) {
@@ -77,13 +122,13 @@ export default function GoosePen({ state, setState }: GoosePenProps) {
         .attr("stroke-width", 1.5);
 
       const node = svg.append("g")
-        .attr("stroke", "#fff")
+        .attr("stroke", "#000")
         .attr("stroke-width", 1.5)
         .selectAll("circle")
         .data(graphData.nodes)
         .join("circle")
-        .attr("r", 8)
-        .attr("fill", (d) => d.group === 1 ? "#3b82f6" : "#10b981"); // blue for source, emerald for target
+        .attr("r", (d) => d.group === 1 ? 8 : 6)
+        .attr("fill", (d) => d.group === 1 ? "#ffffff" : "#52525b"); // white for source, zinc-600 for target
 
       const label = svg.append("g")
         .selectAll("text")
@@ -270,6 +315,16 @@ export default function GoosePen({ state, setState }: GoosePenProps) {
           <Database className="w-5 h-5" />
         </button>
         <button
+          onClick={() => setActiveTab('plans')}
+          className={cn(
+            "p-3 rounded-xl transition-colors",
+            activeTab === 'plans' ? "bg-white/10 text-white" : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+          )}
+          title="Agent Plans"
+        >
+          <ClipboardList className="w-5 h-5" />
+        </button>
+        <button
           onClick={() => setActiveTab('terminal')}
           className={cn(
             "p-3 rounded-xl transition-colors",
@@ -309,140 +364,143 @@ export default function GoosePen({ state, setState }: GoosePenProps) {
         >
           <Smartphone className="w-5 h-5" />
         </button>
+        <button
+          onClick={() => setActiveTab('danger')}
+          className={cn(
+            "p-3 rounded-xl transition-colors",
+            activeTab === 'danger' ? "bg-white/10 text-white" : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+          )}
+          title="Danger Room"
+        >
+          <Zap className="w-5 h-5" />
+        </button>
       </div>
 
-      <div className="flex-1 overflow-auto p-4">
-        {activeTab === 'terminal' && (
-          <div className="h-full flex flex-col font-mono text-xs">
-            <div className="flex-1 overflow-y-auto space-y-1 pb-4">
-              <div className="text-zinc-500 mb-4">
-                Welcome to GoosePen Terminal v1.0.0
-                <br />
-                Type 'help' to see available commands.
+      <div className="flex-1 overflow-auto p-4 relative">
+        <div className={cn("h-full flex flex-col font-mono text-xs", activeTab !== 'terminal' && "hidden")}>
+          <div className="flex-1 overflow-y-auto space-y-1 pb-4">
+            <div className="text-zinc-500 mb-4">
+              Welcome to Sprocket Terminal v1.0.0
+              <br />
+              Type 'help' to see available commands.
+            </div>
+            {state.terminal?.history.map((entry, i) => (
+              <div 
+                key={i} 
+                className={cn(
+                  "whitespace-pre-wrap break-all",
+                entry.type === 'input' ? "text-white" : 
+                entry.type === 'error' ? "text-red-400" : "text-zinc-300"
+                )}
+              >
+                {entry.content}
               </div>
-              {state.terminal?.history.map((entry, i) => (
-                <div 
-                  key={i} 
-                  className={cn(
-                    "whitespace-pre-wrap break-all",
-                  entry.type === 'input' ? "text-white" : 
-                  entry.type === 'error' ? "text-red-400" : "text-zinc-300"
-                  )}
-                >
-                  {entry.content}
-                </div>
-              ))}
-              <div ref={terminalEndRef} />
-            </div>
-            <div className="flex items-center text-white mt-2 shrink-0">
-              <span className="mr-2">{state.terminal?.cwd || '/home/user'}$</span>
-              <input
-                type="text"
-                value={terminalInput}
-                onChange={(e) => setTerminalInput(e.target.value)}
-                onKeyDown={handleTerminalCommand}
-                className="flex-1 bg-transparent border-none outline-none text-zinc-100 placeholder-zinc-700"
-                autoFocus
-                spellCheck={false}
-                autoComplete="off"
-              />
-            </div>
+            ))}
+            <div ref={terminalEndRef} />
           </div>
-        )}
+          <div className="flex items-center text-white mt-2 shrink-0">
+            <span className="mr-2">{state.terminal?.cwd || '/home/user'}$</span>
+            <input
+              type="text"
+              value={terminalInput}
+              onChange={(e) => setTerminalInput(e.target.value)}
+              onKeyDown={handleTerminalCommand}
+              className="flex-1 bg-transparent border-none outline-none text-zinc-100 placeholder-zinc-700"
+              autoFocus={activeTab === 'terminal'}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </div>
+        </div>
 
-        {activeTab === 'files' && (
-          <div className="space-y-4">
-            <div className="flex items-center space-x-2 text-zinc-400 mb-4">
-              <TerminalSquare className="w-4 h-4" />
-              <span className="text-xs uppercase tracking-wider">Virtual File System</span>
-            </div>
-            {Object.keys(state.vfs).length === 0 ? (
-              <p className="text-zinc-600 italic">No files created yet.</p>
-            ) : (
-              <div className="space-y-6">
-                {Object.entries(state.vfs).map(([path, content]) => (
-                  <div key={path} className="space-y-2">
-                    <div className="flex items-center space-x-2 text-white">
-                      <FileText className="w-4 h-4" />
-                      <span className="font-medium">{path}</span>
-                    </div>
-                    <pre className="bg-zinc-900 border border-zinc-800 p-3 rounded-lg overflow-x-auto text-xs text-zinc-300">
-                      {content}
-                    </pre>
+        <div className={cn("space-y-4", activeTab !== 'files' && "hidden")}>
+          <div className="flex items-center space-x-2 text-zinc-400 mb-4">
+            <TerminalSquare className="w-4 h-4" />
+            <span className="text-xs uppercase tracking-wider">Virtual File System</span>
+          </div>
+          {Object.keys(state.vfs).length === 0 ? (
+            <p className="text-zinc-600 italic">No files created yet.</p>
+          ) : (
+            <div className="space-y-6">
+              {Object.entries(state.vfs).map(([path, content]) => (
+                <div key={path} className="space-y-2">
+                  <div className="flex items-center space-x-2 text-white">
+                    <FileText className="w-4 h-4" />
+                    <span className="font-medium">{path}</span>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'browser' && (
-          <div className="space-y-4">
-            <div className="flex items-center space-x-2 text-zinc-400 mb-4">
-              <Globe className="w-4 h-4" />
-              <span className="text-xs uppercase tracking-wider">Simulated Browser</span>
-            </div>
-            
-            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-2 flex items-center space-x-2">
-              <span className="text-zinc-500">URL:</span>
-              <span className="text-white truncate flex-1">
-                {state.browser.currentUrl || 'about:blank'}
-              </span>
-            </div>
-
-            {state.browser.history.length > 0 && (
-              <div className="text-xs text-zinc-500">
-                History: {state.browser.history.join(' → ')}
-              </div>
-            )}
-
-            <div className="mt-4">
-              {state.browser.content ? (
-                <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-lg">
-                  <pre className="whitespace-pre-wrap text-xs text-zinc-300 font-sans">
-                    {state.browser.content.substring(0, 2000)}
-                    {state.browser.content.length > 2000 && '...\n\n[Content truncated for display]'}
+                  <pre className="bg-zinc-900 border border-zinc-800 p-3 rounded-lg overflow-x-auto text-xs text-zinc-300">
+                    {content}
                   </pre>
                 </div>
-              ) : (
-                <p className="text-zinc-600 italic">No page loaded.</p>
-              )}
+              ))}
             </div>
+          )}
+        </div>
+
+        <div className={cn("space-y-4", activeTab !== 'browser' && "hidden")}>
+          <div className="flex items-center space-x-2 text-zinc-400 mb-4">
+            <Globe className="w-4 h-4" />
+            <span className="text-xs uppercase tracking-wider">Simulated Browser</span>
           </div>
-        )}
-        {activeTab === 'vault' && (
-          <div className="space-y-4">
-            <div className="flex items-center space-x-2 text-zinc-400 mb-4">
-              <Database className="w-4 h-4" />
-              <span className="text-xs uppercase tracking-wider">BrainBucket</span>
+          
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-2 flex items-center space-x-2">
+            <span className="text-zinc-500">URL:</span>
+            <span className="text-white truncate flex-1">
+              {state.browser.currentUrl || 'about:blank'}
+            </span>
+          </div>
+
+          {state.browser.history.length > 0 && (
+            <div className="text-xs text-zinc-500">
+              History: {state.browser.history.join(' → ')}
             </div>
-            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
-              <p className="text-zinc-300 text-sm mb-2">The BrainBucket is managing your local knowledge base via OPFS.</p>
-              <div className="grid grid-cols-2 gap-4 mt-4">
-                <div className="bg-zinc-950 p-3 rounded border border-zinc-800">
-                  <div className="text-xs text-zinc-500 uppercase">Neurons</div>
-                  <div className="text-2xl font-mono text-white mt-1">{graphData.nodes.length}</div>
-                </div>
-                <div className="bg-zinc-950 p-3 rounded border border-zinc-800">
-                  <div className="text-xs text-zinc-500 uppercase">Synapses</div>
-                  <div className="text-2xl font-mono text-white mt-1">{graphData.links.length}</div>
-                </div>
+          )}
+
+          <div className="mt-4">
+            {state.browser.content ? (
+              <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-lg">
+                <pre className="whitespace-pre-wrap text-xs text-zinc-300 font-sans">
+                  {state.browser.content.substring(0, 2000)}
+                  {state.browser.content.length > 2000 && '...\n\n[Content truncated for display]'}
+                </pre>
               </div>
-            </div>
+            ) : (
+              <p className="text-zinc-600 italic">No page loaded.</p>
+            )}
+          </div>
+        </div>
+
+        <div className={cn("space-y-4 h-full flex flex-col", activeTab !== 'vault' && "hidden")}>
+          <div className="flex items-center space-x-2 text-zinc-400 mb-2 shrink-0">
+            <Database className="w-4 h-4" />
+            <span className="text-xs uppercase tracking-wider">Neural Pathway Map</span>
+          </div>
+          
+          <div className="flex-1 min-h-0 bg-zinc-900/30 border border-zinc-800 rounded-2xl relative overflow-hidden flex flex-col shadow-inner">
+            <div className="absolute inset-0 opacity-5 pointer-events-none bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:20px_20px]" />
             
-            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 mt-4">
-              <div className="text-xs text-zinc-500 uppercase mb-4">Neural Pathway Map</div>
-              {graphData.nodes.length > 0 ? (
-                <svg ref={svgRef} className="w-full h-[300px] bg-zinc-950 rounded border border-zinc-800" />
-              ) : (
-                <div className="h-[300px] flex items-center justify-center bg-zinc-950 rounded border border-zinc-800 text-zinc-600 italic text-sm">
-                  The vault is empty. No neural pathways formed yet.
-                </div>
-              )}
+            {graphData.nodes.length > 0 ? (
+              <svg ref={svgRef} className="w-full h-full bg-transparent" />
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-zinc-600 italic text-sm">
+                The vault is empty. No neural pathways formed yet.
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 shrink-0">
+            <div className="bg-zinc-900/50 p-4 rounded-2xl border border-zinc-800">
+              <div className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Active Neurons</div>
+              <div className="text-2xl font-mono text-white mt-1">{graphData.nodes.length}</div>
+            </div>
+            <div className="bg-zinc-900/50 p-4 rounded-2xl border border-zinc-800">
+              <div className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Neural Synapses</div>
+              <div className="text-2xl font-mono text-white mt-1">{graphData.links.length}</div>
             </div>
           </div>
-        )}
-        {activeTab === 'pecking' && (
+        </div>
+
+        <div className={cn("h-full", activeTab !== 'pecking' && "hidden")}>
           <PeckingStation 
             state={state.pecking} 
             setState={(updater) => setState(prev => ({ 
@@ -450,7 +508,76 @@ export default function GoosePen({ state, setState }: GoosePenProps) {
               pecking: typeof updater === 'function' ? updater(prev.pecking) : updater 
             }))} 
           />
-        )}
+        </div>
+
+        <div className={cn("space-y-4 h-full overflow-y-auto", activeTab !== 'plans' && "hidden")}>
+          <div className="flex items-center space-x-2 text-zinc-400 mb-4">
+            <ClipboardList className="w-4 h-4" />
+            <span className="text-xs uppercase tracking-wider">Agent Strategic Plans</span>
+          </div>
+
+          {selectedPlan ? (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-white uppercase tracking-widest">{selectedPlan.title || selectedPlanId}</h3>
+                <button onClick={() => setSelectedPlan(null)} className="text-[10px] text-zinc-500 hover:text-white uppercase font-bold">Back to list</button>
+              </div>
+              
+              <div className="space-y-3">
+                {selectedPlan.steps?.map((step: any, i: number) => (
+                  <div key={i} className="flex items-start gap-3 p-3 bg-zinc-950 rounded border border-zinc-800">
+                    <div className={cn(
+                      "w-4 h-4 rounded-full mt-0.5 shrink-0 border",
+                      step.status === 'completed' ? "bg-zinc-400 border-zinc-300" :
+                      step.status === 'in-progress' ? "bg-white border-zinc-200 animate-pulse" :
+                      step.status === 'failed' ? "bg-zinc-800 border-zinc-700" : "bg-zinc-900 border-zinc-800"
+                    )} />
+                    <div className="flex-1">
+                      <div className="text-sm text-zinc-200">{step.task}</div>
+                      <div className="text-[10px] text-zinc-500 uppercase mt-1">{step.status}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="pt-4 border-t border-zinc-800">
+                <div className="text-[10px] text-zinc-500 uppercase">Overall Status</div>
+                <div className={cn(
+                  "text-sm font-bold mt-1 uppercase",
+                  selectedPlan.status === 'completed' ? "text-zinc-300" :
+                  selectedPlan.status === 'active' ? "text-white" : "text-zinc-500"
+                )}>
+                  {selectedPlan.status}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {plans.length > 0 ? plans.map(id => (
+                <div 
+                  key={id} 
+                  onClick={() => handleSelectPlan(id)}
+                  className="p-3 bg-zinc-900 border border-zinc-800 rounded-lg hover:border-zinc-600 transition-colors cursor-pointer flex items-center justify-between group"
+                >
+                  <div className="flex items-center space-x-3">
+                    <ClipboardList className="w-4 h-4 text-zinc-500 group-hover:text-zinc-300" />
+                    <span className="text-sm text-zinc-300 group-hover:text-white">{id}</span>
+                  </div>
+                  <div className="text-[10px] text-zinc-500 uppercase">View Plan</div>
+                </div>
+              )) : (
+                <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-8 text-center">
+                  <p className="text-zinc-600 italic text-sm">No strategic plans active.</p>
+                  <p className="text-zinc-700 text-xs mt-2">Sprocket will create plans automatically for complex tasks.</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className={cn("h-full", activeTab !== 'danger' && "hidden")}>
+          <DangerRoom />
+        </div>
       </div>
     </div>
   );

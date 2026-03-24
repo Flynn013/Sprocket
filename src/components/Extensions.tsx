@@ -24,7 +24,7 @@ export default function Extensions({ appState, setAppState }: { appState: AppSta
         {/* Google Search Extension */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex items-start justify-between transition-colors hover:border-zinc-700">
           <div className="flex items-start space-x-4">
-            <div className="p-3 bg-blue-500/10 text-blue-400 rounded-xl shrink-0">
+            <div className="p-3 bg-white/10 text-white rounded-xl shrink-0">
               <Search className="w-6 h-6" />
             </div>
             <div className="space-y-1">
@@ -53,7 +53,7 @@ export default function Extensions({ appState, setAppState }: { appState: AppSta
         {/* GoosePen Extension */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex items-start justify-between transition-colors hover:border-zinc-700">
           <div className="flex items-start space-x-4">
-            <div className="p-3 bg-blue-500/10 text-blue-400 rounded-xl shrink-0">
+            <div className="p-3 bg-white/10 text-white rounded-xl shrink-0">
               <TerminalSquare className="w-6 h-6" />
             </div>
             <div className="space-y-1">
@@ -82,7 +82,7 @@ export default function Extensions({ appState, setAppState }: { appState: AppSta
         {/* Memory Extension */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex items-start justify-between transition-colors hover:border-zinc-700">
           <div className="flex items-start space-x-4">
-            <div className="p-3 bg-blue-500/10 text-blue-400 rounded-xl shrink-0">
+            <div className="p-3 bg-white/10 text-white rounded-xl shrink-0">
               <Wrench className="w-6 h-6" />
             </div>
             <div className="space-y-1">
@@ -110,9 +110,9 @@ export default function Extensions({ appState, setAppState }: { appState: AppSta
 
       </div>
 
-      <div className="mt-8 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-2xl flex items-start space-x-3">
-        <ShieldAlert className="w-5 h-5 text-yellow-500 shrink-0 mt-0.5" />
-        <p className="text-sm text-yellow-500/90 leading-relaxed">
+      <div className="mt-8 p-4 bg-zinc-900 border border-zinc-800 rounded-2xl flex items-start space-x-3">
+        <ShieldAlert className="w-5 h-5 text-zinc-400 shrink-0 mt-0.5" />
+        <p className="text-sm text-zinc-500 leading-relaxed">
           Extensions give Goose access to external services. Only enable extensions you trust.
         </p>
       </div>

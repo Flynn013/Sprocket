@@ -42,7 +42,7 @@ export default function LocalInference({ appState, setAppState }: { appState: Ap
 
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
         <div className="flex items-center space-x-2 text-zinc-100 font-medium mb-4">
-          <HardDrive className="w-5 h-5 text-emerald-400" />
+          <HardDrive className="w-5 h-5 text-white" />
           <h3>Available Models</h3>
         </div>
         
@@ -56,22 +56,27 @@ export default function LocalInference({ appState, setAppState }: { appState: Ap
                 className={cn(
                   "flex items-center justify-between p-4 rounded-xl border transition-all",
                   isSelected 
-                    ? "bg-emerald-500/10 border-emerald-500/50" 
+                    ? "bg-white/10 border-white/50" 
                     : "bg-zinc-950 border-zinc-800 hover:border-zinc-700"
                 )}
               >
                 <div className="flex items-center space-x-4">
                   <div className={cn(
                     "w-10 h-10 rounded-lg flex items-center justify-center shrink-0",
-                    isSelected ? "bg-emerald-500/20 text-emerald-400" : "bg-zinc-900 text-zinc-400"
+                    isSelected ? "bg-white/20 text-white" : "bg-zinc-900 text-zinc-400"
                   )}>
                     <Cpu className="w-5 h-5" />
                   </div>
                   <div>
                     <h4 className="text-sm font-medium text-zinc-100">{model.model_id}</h4>
-                    <p className="text-xs text-zinc-500 mt-1">
-                      {model.vram_required_MB ? `Est. VRAM: ${Math.round(model.vram_required_MB / 1024)}GB` : 'VRAM: Unknown'}
-                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <p className="text-xs text-zinc-500">
+                        {model.vram_required_MB ? `Est. VRAM: ${Math.round(model.vram_required_MB / 1024)}GB` : 'VRAM: Unknown'}
+                      </p>
+                      {localStorage.getItem(`stocked_${model.model_id}`) === 'true' && (
+                        <span className="text-[10px] bg-white/10 text-white px-1.5 py-0.5 rounded border border-white/20 font-mono uppercase">Stocked</span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 
@@ -81,7 +86,7 @@ export default function LocalInference({ appState, setAppState }: { appState: Ap
                     className={cn(
                       "px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2",
                       isSelected 
-                        ? "bg-emerald-500 text-black hover:bg-emerald-400" 
+                        ? "bg-white text-black hover:bg-zinc-200" 
                         : "bg-zinc-800 text-white hover:bg-zinc-700"
                     )}
                   >
